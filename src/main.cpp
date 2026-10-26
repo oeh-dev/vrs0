@@ -72,11 +72,11 @@ void run() {
     // MoltenVK 같은 portability 구현은 이 확장과 플래그가 있어야 열거된다.
     // 확장이 없는 플랫폼(Windows, Linux)에서도 같은 코드가 돌도록 조건부로 켠다.
     vk::InstanceCreateFlags instanceFlags{};
-    // if (hasInstanceExtension(context.enumerateInstanceExtensionProperties(),
-    //                          VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME)) {
-    //     extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
-    //     instanceFlags |= vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR;
-    // }
+    if (hasInstanceExtension(context.enumerateInstanceExtensionProperties(),
+                             VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME)) {
+        extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+        instanceFlags |= vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR;
+    }
  
     const vk::ApplicationInfo appInfo{
         .pApplicationName = "Vulkan RAII Sample",
