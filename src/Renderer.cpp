@@ -1,7 +1,6 @@
 #include "Renderer.hpp"
 
 #include <array>
-#include <cmath>
 #include <limits>
 
 #include "Swapchain.hpp"
@@ -46,7 +45,13 @@ void transitionImage(const vk::raii::CommandBuffer& cmd, vk::Image image, vk::Im
 
 }  // namespace
 
-Renderer::Renderer(const VulkanContext& context, Swapchain& swapchain) : context_(context), swapchain_(swapchain) {
+Renderer::Renderer(const VulkanContext& context, Swapchain& swapchain)
+    : context_(context),
+      swapchain_(swapchain),
+      // 셰이더 경로는 CMake가 SHADER_DIR로 넘겨준다.
+      // 파이프라인은 스왑체인 포맷에 맞춰 만든다. (재생성 시 포맷이 바뀌는 경우는 다루지 않는다)
+      pipeline_(context.device(), swapchain.format(), SHADER_DIR "/triangle.vert.spv",
+                SHADER_DIR "/triangle.frag.spv") {
     const auto& device = context_.device();
 
     commandPool_ = vk::raii::CommandPool(
@@ -84,7 +89,7 @@ void Renderer::drawFrame() {
 
     // 3. 명령을 기록한다.
     frame.commandBuffer.reset();
-    recordCommands(frame.commandBuffer, *imageIndex);
+    recordCommands(frame.commandBuffer, swapchain_.image(*imageIndex), swapchain_.extent());
 
     // 4. 큐에 제출한다. imageAvailable을 기다렸다가 실행하고, 끝나면 renderFinished를 신호한다.
     const vk::SemaphoreSubmitInfo waitInfo{
@@ -112,9 +117,8 @@ void Renderer::drawFrame() {
     frame_ = (frame_ + 1) % kMaxFramesInFlight;
 }
 
-void Renderer::recordCommands(const vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
-    const SwapchainImage& target = swapchain_.image(imageIndex);
-
+void Renderer::recordCommands(const vk::raii::CommandBuffer& cmd, const SwapchainImage& target,
+                              vk::Extent2D extent) {
     cmd.begin(vk::CommandBufferBeginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 
     // 이미지 레이아웃 전환: 이전 내용은 버리고(Undefined) 색상 출력용으로.
@@ -123,15 +127,8 @@ void Renderer::recordCommands(const vk::raii::CommandBuffer& cmd, uint32_t image
                     vk::PipelineStageFlagBits2::eColorAttachmentOutput, {},
                     vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite);
 
-    // 시간에 따라 천천히 바뀌는 색으로 지운다. 색이 변하면 프레임 루프가 돌고 있다는 뜻이다.
-    // sRGB 포맷이므로 이 값은 선형(물리적인 빛의 세기)으로 해석된다.
-    const float t = static_cast<float>(glfwGetTime());
-    const vk::ClearValue clear{.color = vk::ClearColorValue{.float32 = std::array<float, 4>{
-                                                                0.5f + 0.5f * std::sin(t),
-                                                                0.5f + 0.5f * std::sin(t + 2.1f),
-                                                                0.5f + 0.5f * std::sin(t + 4.2f),
-                                                                1.0f,
-                                                            }}};
+    // 삼각형이 잘 보이도록 어두운 단색으로 지운다. (sRGB 포맷이므로 선형 값)
+    const vk::ClearValue clear{.color = vk::ClearColorValue{.float32 = std::array<float, 4>{0.01f, 0.01f, 0.02f, 1.0f}}};
     const vk::RenderingAttachmentInfo colorAttachment{
         .imageView = *target.view,
         .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
@@ -141,12 +138,28 @@ void Renderer::recordCommands(const vk::raii::CommandBuffer& cmd, uint32_t image
     };
     // dynamic rendering: 렌더패스와 프레임버퍼 객체 없이 그 자리에서 대상을 지정한다.
     cmd.beginRendering(vk::RenderingInfo{
-        .renderArea = vk::Rect2D{.offset = {0, 0}, .extent = swapchain_.extent()},
+        .renderArea = vk::Rect2D{.offset = {0, 0}, .extent = extent},
         .layerCount = 1,
         .colorAttachmentCount = 1,
         .pColorAttachments = &colorAttachment,
     });
-    // 4단계부터 여기에 그리기 명령이 들어간다.
+
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline_.handle());
+
+    // 파이프라인에서 동적으로 남겨둔 뷰포트와 시저를 지정한다. 이미지 전체에 그린다.
+    cmd.setViewport(0, vk::Viewport{
+                           .x = 0.0f,
+                           .y = 0.0f,
+                           .width = static_cast<float>(extent.width),
+                           .height = static_cast<float>(extent.height),
+                           .minDepth = 0.0f,
+                           .maxDepth = 1.0f,
+                       });
+    cmd.setScissor(0, vk::Rect2D{.offset = {0, 0}, .extent = extent});
+
+    // 정점 3개, 인스턴스 1개. 버텍스 셰이더가 gl_VertexIndex 0, 1, 2로 세 번 실행된다.
+    cmd.draw(3, 1, 0, 0);
+
     cmd.endRendering();
 
     // 이미지 레이아웃 전환: 색상 출력용에서 화면 출력용으로.

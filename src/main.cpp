@@ -5,6 +5,7 @@
 //   VulkanContext  앱 수명: 인스턴스, 디바이스, 큐 등
 //   Swapchain      스왑체인 수명: 화면 크기가 바뀌면 다시 만드는 것들
 //   Renderer       프레임 수명: 매 프레임 기록하고 제출하는 것들
+//   Pipeline       셰이더와 그리기 설정을 묶은 그래픽스 파이프라인
 
 #include <cstdlib>
 #include <exception>
@@ -34,8 +35,11 @@ public:
     ~App() {
         try {
             context_.device().waitIdle();
-        } catch (...) {
+        } catch (const std::exception& e) {
             // 소멸자에서는 예외를 밖으로 던지지 않는다.
+            std::cerr << "waitIdle failed during shutdown: " << e.what() << '\n';
+        } catch (...) {
+            std::cerr << "waitIdle failed during shutdown: unknown error\n";
         }
     }
 

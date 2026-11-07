@@ -3,10 +3,12 @@
 #include <cstdint>
 #include <vector>
 
+#include "Pipeline.hpp"
 #include "vk.hpp"
 
 class VulkanContext;
 class Swapchain;
+struct SwapchainImage;
 
 // 프레임 슬롯 하나에 딸린 객체들. CPU가 GPU보다 앞서 준비하는 프레임마다 하나씩 둔다.
 struct FrameData {
@@ -26,11 +28,13 @@ public:
     void drawFrame();
 
 private:
-    void recordCommands(const vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
+    // 어느 이미지에 그릴지만 알면 되므로, 인덱스가 아니라 이미지와 크기를 받는다.
+    void recordCommands(const vk::raii::CommandBuffer& cmd, const SwapchainImage& target, vk::Extent2D extent);
 
     const VulkanContext& context_;
     Swapchain& swapchain_;
 
+    Pipeline pipeline_;
     vk::raii::CommandPool commandPool_ = nullptr;
     std::vector<FrameData> frames_;  // 커맨드 풀보다 뒤에 선언: 커맨드 버퍼가 풀보다 먼저 소멸
     uint32_t frame_ = 0;
