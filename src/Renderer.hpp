@@ -8,6 +8,7 @@
 
 class VulkanContext;
 class Swapchain;
+class Mesh;
 struct SwapchainImage;
 
 // 프레임 슬롯 하나에 딸린 객체들. CPU가 GPU보다 앞서 준비하는 프레임마다 하나씩 둔다.
@@ -25,11 +26,13 @@ public:
     // context와 swapchain이 이 객체보다 오래 살아야 한다. (App에서 보장)
     Renderer(const VulkanContext& context, Swapchain& swapchain);
 
-    void drawFrame();
+    // mesh는 그리는 동안 살아 있어야 한다. 장면 데이터는 App이 소유하고 매 프레임 넘겨준다.
+    void drawFrame(const Mesh& mesh);
 
 private:
     // 어느 이미지에 그릴지만 알면 되므로, 인덱스가 아니라 이미지와 크기를 받는다.
-    void recordCommands(const vk::raii::CommandBuffer& cmd, const SwapchainImage& target, vk::Extent2D extent);
+    void recordCommands(const vk::raii::CommandBuffer& cmd, const SwapchainImage& target, vk::Extent2D extent,
+                        const Mesh& mesh);
 
     const VulkanContext& context_;
     Swapchain& swapchain_;

@@ -6,6 +6,8 @@
 #include <stdexcept>
 #include <vector>
 
+#include "Vertex.hpp"
+
 namespace {
 
 // SPIR-V 파일은 32비트 워드의 배열이다.
@@ -43,8 +45,16 @@ Pipeline::Pipeline(const vk::raii::Device& device, vk::Format colorFormat, const
         {.stage = vk::ShaderStageFlagBits::eFragment, .module = *fragmentShader, .pName = "main"},
     }};
 
-    // 정점 입력: 정점 버퍼가 없으므로 비어 있다. (셰이더가 gl_VertexIndex로 직접 만든다)
-    const vk::PipelineVertexInputStateCreateInfo vertexInput{};
+    // 정점 입력: 버퍼를 어떤 간격으로 읽고(바인딩), 각 값을 셰이더의 어느 location에 넣을지(속성).
+    // 가리키는 배열은 파이프라인 생성 시점까지 살아 있어야 하므로 지역 변수로 둔다.
+    const auto binding = Vertex::binding();
+    const auto attributes = Vertex::attributes();
+    const vk::PipelineVertexInputStateCreateInfo vertexInput{
+        .vertexBindingDescriptionCount = 1,
+        .pVertexBindingDescriptions = &binding,
+        .vertexAttributeDescriptionCount = static_cast<uint32_t>(attributes.size()),
+        .pVertexAttributeDescriptions = attributes.data(),
+    };
 
     // 정점 세 개씩 삼각형 하나로 묶는다.
     const vk::PipelineInputAssemblyStateCreateInfo inputAssembly{

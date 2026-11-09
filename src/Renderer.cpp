@@ -3,6 +3,7 @@
 #include <array>
 #include <limits>
 
+#include "Mesh.hpp"
 #include "Swapchain.hpp"
 #include "VulkanContext.hpp"
 
@@ -75,7 +76,7 @@ Renderer::Renderer(const VulkanContext& context, Swapchain& swapchain)
     }
 }
 
-void Renderer::drawFrame() {
+void Renderer::drawFrame(const Mesh& mesh) {
     const auto& device = context_.device();
     FrameData& frame = frames_[frame_];
 
@@ -89,7 +90,7 @@ void Renderer::drawFrame() {
 
     // 3. 명령을 기록한다.
     frame.commandBuffer.reset();
-    recordCommands(frame.commandBuffer, swapchain_.image(*imageIndex), swapchain_.extent());
+    recordCommands(frame.commandBuffer, swapchain_.image(*imageIndex), swapchain_.extent(), mesh);
 
     // 4. 큐에 제출한다. imageAvailable을 기다렸다가 실행하고, 끝나면 renderFinished를 신호한다.
     const vk::SemaphoreSubmitInfo waitInfo{
@@ -118,7 +119,7 @@ void Renderer::drawFrame() {
 }
 
 void Renderer::recordCommands(const vk::raii::CommandBuffer& cmd, const SwapchainImage& target,
-                              vk::Extent2D extent) {
+                              vk::Extent2D extent, const Mesh& mesh) {
     cmd.begin(vk::CommandBufferBeginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 
     // 이미지 레이아웃 전환: 이전 내용은 버리고(Undefined) 색상 출력용으로.
@@ -127,7 +128,7 @@ void Renderer::recordCommands(const vk::raii::CommandBuffer& cmd, const Swapchai
                     vk::PipelineStageFlagBits2::eColorAttachmentOutput, {},
                     vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite);
 
-    // 삼각형이 잘 보이도록 어두운 단색으로 지운다. (sRGB 포맷이므로 선형 값)
+    // 도형이 잘 보이도록 어두운 단색으로 지운다. (sRGB 포맷이므로 선형 값)
     const vk::ClearValue clear{.color = vk::ClearColorValue{.float32 = std::array<float, 4>{0.01f, 0.01f, 0.02f, 1.0f}}};
     const vk::RenderingAttachmentInfo colorAttachment{
         .imageView = *target.view,
@@ -157,8 +158,8 @@ void Renderer::recordCommands(const vk::raii::CommandBuffer& cmd, const Swapchai
                        });
     cmd.setScissor(0, vk::Rect2D{.offset = {0, 0}, .extent = extent});
 
-    // 정점 3개, 인스턴스 1개. 버텍스 셰이더가 gl_VertexIndex 0, 1, 2로 세 번 실행된다.
-    cmd.draw(3, 1, 0, 0);
+    // 정점/인덱스 버퍼를 바인딩하고 그린다.
+    mesh.record(cmd);
 
     cmd.endRendering();
 

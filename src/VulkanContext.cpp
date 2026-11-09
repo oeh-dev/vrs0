@@ -176,6 +176,21 @@ void printPhysicalDevice(size_t index, const vk::raii::PhysicalDevice& pd) {
     }
 }
 
+// 메모리 힙(실제 메모리 덩어리)과 메모리 타입(힙을 쓰는 방식)을 출력한다.
+void printMemoryProperties(const vk::raii::PhysicalDevice& pd) {
+    const auto props = pd.getMemoryProperties();
+    for (uint32_t i = 0; i < props.memoryHeapCount; ++i) {
+        const auto& heap = props.memoryHeaps[i];
+        std::cout << "  memoryHeap[" << i << "] " << (heap.size >> 20) << " MiB "
+                  << vk::to_string(heap.flags) << '\n';
+    }
+    for (uint32_t i = 0; i < props.memoryTypeCount; ++i) {
+        const auto& type = props.memoryTypes[i];
+        std::cout << "  memoryType[" << i << "] heap " << type.heapIndex << ' '
+                  << vk::to_string(type.propertyFlags) << '\n';
+    }
+}
+
 // requestedIndex가 있으면 그 디바이스를, 없으면 score()가 가장 높은 디바이스를 고른다.
 DeviceCandidate selectDevice(const vk::raii::PhysicalDevices& devices, const vk::raii::SurfaceKHR& surface,
                              std::optional<size_t> requestedIndex) {
@@ -256,6 +271,7 @@ VulkanContext::VulkanContext(GLFWwindow* window, std::optional<size_t> requested
     physicalDevice_ = std::move(devices[chosen.index]);
     queueFamily_ = chosen.queueFamily;
     std::cout << "Selected device [" << chosen.index << "], queue family " << queueFamily_ << '\n';
+    printMemoryProperties(physicalDevice_);
 
     device_ = createDevice(physicalDevice_, queueFamily_);
     queue_ = device_.getQueue(queueFamily_, 0);

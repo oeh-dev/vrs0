@@ -23,6 +23,20 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(glfw)
 
+# GLM: 벡터와 행렬 (셰이더의 vec/mat과 같은 메모리 배치)
+FetchContent_Declare(
+  glm
+  GIT_REPOSITORY https://github.com/g-truc/glm.git
+  GIT_TAG        1.0.1
+  GIT_SHALLOW    TRUE
+  SOURCE_SUBDIR  no-cmake
+)
+FetchContent_MakeAvailable(glm)
+
+add_library(glm_headers INTERFACE)
+target_include_directories(glm_headers SYSTEM INTERFACE ${glm_SOURCE_DIR})
+add_library(glm::glm ALIAS glm_headers)
+
 add_executable(vulkan_raii_sample
   src/main.cpp
   src/Window.cpp
@@ -30,8 +44,10 @@ add_executable(vulkan_raii_sample
   src/Swapchain.cpp
   src/Renderer.cpp
   src/Pipeline.cpp
+  src/Buffer.cpp
+  src/Mesh.cpp
 )
-target_link_libraries(vulkan_raii_sample PRIVATE Vulkan::Vulkan glfw)
+target_link_libraries(vulkan_raii_sample PRIVATE Vulkan::Vulkan glfw glm::glm)
 
 # Vulkan-Hpp와 GLFW의 설정 매크로. 파일마다 달라지면 같은 구조체가 다르게 정의되므로
 # 소스 코드가 아니라 여기 한곳에서 모든 파일에 똑같이 적용한다.

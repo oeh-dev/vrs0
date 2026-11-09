@@ -6,13 +6,17 @@
 //   Swapchain      스왑체인 수명: 화면 크기가 바뀌면 다시 만드는 것들
 //   Renderer       프레임 수명: 매 프레임 기록하고 제출하는 것들
 //   Pipeline       셰이더와 그리기 설정을 묶은 그래픽스 파이프라인
+//   Mesh           정점 버퍼와 인덱스 버퍼
 
+#include <array>
+#include <cstdint>
 #include <cstdlib>
 #include <exception>
 #include <iostream>
 #include <optional>
 #include <string>
 
+#include "Mesh.hpp"
 #include "Renderer.hpp"
 #include "Swapchain.hpp"
 #include "VulkanContext.hpp"
@@ -23,12 +27,23 @@ namespace {
 constexpr int kWidth = 1280;
 constexpr int kHeight = 720;
 
+// 5-1: 사각형 하나. 정점 4개를 인덱스 6개(삼각형 2개)가 공유한다.
+// 정규화 장치 좌표이므로 화면 비율에 따라 늘어나 보인다. (5-2에서 보정)
+const std::array<Vertex, 4> kQuadVertices{{
+    {.pos = {-0.5f, -0.5f}, .color = {1.0f, 0.0f, 0.0f}},  // 왼쪽 위
+    {.pos = {0.5f, -0.5f}, .color = {0.0f, 1.0f, 0.0f}},   // 오른쪽 위
+    {.pos = {0.5f, 0.5f}, .color = {0.0f, 0.0f, 1.0f}},    // 오른쪽 아래
+    {.pos = {-0.5f, 0.5f}, .color = {1.0f, 1.0f, 1.0f}},   // 왼쪽 아래
+}};
+const std::array<uint16_t, 6> kQuadIndices{0, 1, 2, 2, 3, 0};
+
 class App {
 public:
     explicit App(std::optional<size_t> requestedDevice)
         : window_(kWidth, kHeight, "Vulkan RAII Sample"),
           context_(window_.handle(), requestedDevice),
           swapchain_(context_, window_.handle()),
+          mesh_(context_, kQuadVertices, kQuadIndices),
           renderer_(context_, swapchain_) {}
 
     // 멤버가 소멸하기 전에, GPU가 아직 사용 중인 객체가 없도록 모든 작업이 끝나기를 기다린다.
@@ -47,7 +62,7 @@ public:
         while (!window_.shouldClose()) {
             glfwPollEvents();
             if (window_.isKeyPressed(GLFW_KEY_ESCAPE)) window_.requestClose();
-            renderer_.drawFrame();
+            renderer_.drawFrame(mesh_);
         }
     }
 
@@ -57,6 +72,7 @@ private:
     Window window_;
     VulkanContext context_;
     Swapchain swapchain_;
+    Mesh mesh_;
     Renderer renderer_;
 };
 
