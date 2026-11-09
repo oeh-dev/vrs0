@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <vector>
+#include <glm/glm.hpp>
 
 #include "Pipeline.hpp"
 #include "vk.hpp"
@@ -27,12 +28,13 @@ public:
     Renderer(const VulkanContext& context, Swapchain& swapchain);
 
     // mesh는 그리는 동안 살아 있어야 한다. 장면 데이터는 App이 소유하고 매 프레임 넘겨준다.
-    void drawFrame(const Mesh& mesh);
+    // model: 모델 → 월드, view: 월드 → 카메라. 투영은 화면 비율을 아는 Renderer가 만든다.
+    void drawFrame(const Mesh& mesh, const glm::mat4& model, const glm::mat4& view);
 
 private:
     // 어느 이미지에 그릴지만 알면 되므로, 인덱스가 아니라 이미지와 크기를 받는다.
     void recordCommands(const vk::raii::CommandBuffer& cmd, const SwapchainImage& target, vk::Extent2D extent,
-                        const Mesh& mesh);
+                        const Mesh& mesh, const glm::mat4& mvp);
 
     const VulkanContext& context_;
     Swapchain& swapchain_;

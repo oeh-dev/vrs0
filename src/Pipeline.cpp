@@ -69,7 +69,9 @@ Pipeline::Pipeline(const vk::raii::Device& device, vk::Format colorFormat, const
 
     const vk::PipelineRasterizationStateCreateInfo rasterization{
         .polygonMode = vk::PolygonMode::eFill,
-        .cullMode = vk::CullModeFlagBits::eNone,  // 뒷면 제거 없음. 5단계의 입체에서 켠다.
+        // 뒷면 제거: 화면에서 시계 방향으로 보이는 삼각형은 그리지 않는다.
+        // 모델은 바깥에서 볼 때 반시계 방향으로 정의하고, 투영 행렬의 y 반전으로 화면에서도 반시계가 유지된다.
+        .cullMode = vk::CullModeFlagBits::eBack,
         .frontFace = vk::FrontFace::eCounterClockwise,
         .lineWidth = 1.0f,  // 기본값 0은 잘못된 값이다. 반드시 1.0으로 지정한다.
     };
@@ -97,7 +99,16 @@ Pipeline::Pipeline(const vk::raii::Device& device, vk::Format colorFormat, const
         .pDynamicStates = dynamicStates.data(),
     };
 
-    layout_ = vk::raii::PipelineLayout(device, vk::PipelineLayoutCreateInfo{});
+    // push constant는 버텍스 셰이더에서만 읽는다.
+    const vk::PushConstantRange pushConstantRange{
+        .stageFlags = vk::ShaderStageFlagBits::eVertex,
+        .offset = 0,
+        .size = sizeof(PushConstants),
+    };
+    layout_ = vk::raii::PipelineLayout(device, vk::PipelineLayoutCreateInfo{
+                                                   .pushConstantRangeCount = 1,
+                                                   .pPushConstantRanges = &pushConstantRange,
+                                               });
 
     // dynamic rendering: 렌더패스 대신 그릴 대상의 포맷을 pNext로 알려준다.
     const vk::PipelineRenderingCreateInfo renderingInfo{

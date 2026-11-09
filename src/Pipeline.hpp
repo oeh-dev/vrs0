@@ -1,8 +1,16 @@
 #pragma once
 
 #include <string>
+#include <glm/glm.hpp>
 
 #include "vk.hpp"
+
+// 그릴 때마다 명령 버퍼에 직접 실어 보내는 작은 데이터. 셰이더의 push_constant 블록과 배치가 같아야 한다.
+// 스펙이 보장하는 최소 크기는 128바이트이므로 그 안에 맞춘다.
+struct PushConstants {
+    glm::mat4 mvp;  // 모델 → 클립 공간. GLM과 GLSL 모두 열 우선(column-major)이라 그대로 복사하면 된다.
+};
+static_assert(sizeof(PushConstants) <= 128);
 
 // 그래픽스 파이프라인 하나와 그 레이아웃을 소유한다.
 //
@@ -18,7 +26,7 @@ public:
     const vk::raii::PipelineLayout& layout() const { return layout_; }
 
 private:
-    // 레이아웃: 셰이더가 받는 외부 자원(디스크립터, push constant)의 구성. 지금은 비어 있다.
+    // 레이아웃: 셰이더가 받는 외부 자원(디스크립터, push constant)의 구성. 지금은 push constant 하나.
     vk::raii::PipelineLayout layout_ = nullptr;
     vk::raii::Pipeline pipeline_ = nullptr;
 };

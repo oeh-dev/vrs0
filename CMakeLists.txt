@@ -55,6 +55,7 @@ target_compile_definitions(vulkan_raii_sample PRIVATE
   VULKAN_HPP_NO_CONSTRUCTORS                     # 구조체를 지정 초기화로 작성 (C++20)
   VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS # 스왑체인 무효화를 예외 대신 반환값으로
   GLFW_INCLUDE_NONE                              # GLFW가 OpenGL 헤더를 포함하지 않게
+  GLM_FORCE_DEPTH_ZERO_TO_ONE                    # 투영 행렬의 깊이 범위를 Vulkan의 0..1로 (기본은 OpenGL의 -1..1)
 )
 
 # 한국어 Windows의 MSVC가 한글 주석을 CP949로 잘못 읽지 않도록

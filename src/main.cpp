@@ -15,6 +15,7 @@
 #include <iostream>
 #include <optional>
 #include <string>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include "Mesh.hpp"
 #include "Renderer.hpp"
@@ -27,13 +28,13 @@ namespace {
 constexpr int kWidth = 1280;
 constexpr int kHeight = 720;
 
-// 5-1: 사각형 하나. 정점 4개를 인덱스 6개(삼각형 2개)가 공유한다.
-// 정규화 장치 좌표이므로 화면 비율에 따라 늘어나 보인다. (5-2에서 보정)
+// 사각형 하나. 정점 4개를 인덱스 6개(삼각형 2개)가 공유한다.
+// 모델 좌표(x 오른쪽, y 위쪽 +, z 화면 앞쪽 +)이고, 앞(+z)에서 볼 때 반시계 방향으로 감는다.
 const std::array<Vertex, 4> kQuadVertices{{
-    {.pos = {-0.5f, -0.5f}, .color = {1.0f, 0.0f, 0.0f}},  // 왼쪽 위
-    {.pos = {0.5f, -0.5f}, .color = {0.0f, 1.0f, 0.0f}},   // 오른쪽 위
-    {.pos = {0.5f, 0.5f}, .color = {0.0f, 0.0f, 1.0f}},    // 오른쪽 아래
-    {.pos = {-0.5f, 0.5f}, .color = {1.0f, 1.0f, 1.0f}},   // 왼쪽 아래
+    {.pos = {-0.5f, -0.5f}, .color = {1.0f, 0.0f, 0.0f}},  // 왼쪽 아래
+    {.pos = {0.5f, -0.5f}, .color = {0.0f, 1.0f, 0.0f}},   // 오른쪽 아래
+    {.pos = {0.5f, 0.5f}, .color = {0.0f, 0.0f, 1.0f}},    // 오른쪽 위
+    {.pos = {-0.5f, 0.5f}, .color = {1.0f, 1.0f, 1.0f}},   // 왼쪽 위
 }};
 const std::array<uint16_t, 6> kQuadIndices{0, 1, 2, 2, 3, 0};
 
@@ -62,7 +63,16 @@ public:
         while (!window_.shouldClose()) {
             glfwPollEvents();
             if (window_.isKeyPressed(GLFW_KEY_ESCAPE)) window_.requestClose();
-            renderer_.drawFrame(mesh_);
+
+            // 시간에 비례해 y축(세로축) 둘레로 회전한다. 프레임 속도와 상관없이 같은 빠르기가 된다.
+            const float angle = static_cast<float>(glfwGetTime()) * glm::radians(60.0f);  // 초당 60도
+            const glm::mat4 model = glm::rotate(glm::mat4(1.0f), angle, glm::vec3(0.0f, 1.0f, 0.0f));
+
+            // 카메라: (0, 0, 2)에서 원점을 본다. 위쪽은 +y.
+            const glm::mat4 view =
+                glm::lookAt(glm::vec3(0.0f, 0.0f, 2.0f), glm::vec3(0.0f), glm::vec3(1.0f, 1.0f, 0.0f));
+
+            renderer_.drawFrame(mesh_, model, view);
         }
     }
 

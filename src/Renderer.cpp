@@ -2,6 +2,7 @@
 
 #include <array>
 #include <limits>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include "Mesh.hpp"
 #include "Swapchain.hpp"
@@ -44,6 +45,16 @@ void transitionImage(const vk::raii::CommandBuffer& cmd, vk::Image image, vk::Im
     });
 }
 
+// 카메라 공간 → Vulkan 클립 공간.
+// GLM은 OpenGL 관례(y가 위쪽 +)를 따르므로 y를 뒤집어 Vulkan 관례(y가 아래쪽 +)에 맞춘다.
+// 깊이 범위 0..1은 CMake의 GLM_FORCE_DEPTH_ZERO_TO_ONE으로 맞춘다.
+glm::mat4 makeProjection(vk::Extent2D extent) {
+    const float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
+    glm::mat4 proj = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);  // 세로 시야각, 비율, near, far
+    proj[1][1] *= -1.0f;
+    return proj;
+}
+
 }  // namespace
 
 Renderer::Renderer(const VulkanContext& context, Swapchain& swapchain)
@@ -76,7 +87,7 @@ Renderer::Renderer(const VulkanContext& context, Swapchain& swapchain)
     }
 }
 
-void Renderer::drawFrame(const Mesh& mesh) {
+void Renderer::drawFrame(const Mesh& mesh, const glm::mat4& model, const glm::mat4& view) {
     const auto& device = context_.device();
     FrameData& frame = frames_[frame_];
 
@@ -90,7 +101,10 @@ void Renderer::drawFrame(const Mesh& mesh) {
 
     // 3. 명령을 기록한다.
     frame.commandBuffer.reset();
-    recordCommands(frame.commandBuffer, swapchain_.image(*imageIndex), swapchain_.extent(), mesh);
+    // 이미지를 받은 뒤에 투영을 만든다. 획득 과정에서 스왑체인이 재생성되면 크기가 바뀌기 때문이다.
+    const vk::Extent2D extent = swapchain_.extent();
+    const glm::mat4 mvp = makeProjection(extent) * view * model;  // 오른쪽부터 적용: 모델 → 월드 → 카메라 → 클립
+    recordCommands(frame.commandBuffer, swapchain_.image(*imageIndex), extent, mesh, mvp);
 
     // 4. 큐에 제출한다. imageAvailable을 기다렸다가 실행하고, 끝나면 renderFinished를 신호한다.
     const vk::SemaphoreSubmitInfo waitInfo{
@@ -119,7 +133,7 @@ void Renderer::drawFrame(const Mesh& mesh) {
 }
 
 void Renderer::recordCommands(const vk::raii::CommandBuffer& cmd, const SwapchainImage& target,
-                              vk::Extent2D extent, const Mesh& mesh) {
+                              vk::Extent2D extent, const Mesh& mesh, const glm::mat4& mvp) {
     cmd.begin(vk::CommandBufferBeginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 
     // 이미지 레이아웃 전환: 이전 내용은 버리고(Undefined) 색상 출력용으로.
@@ -157,6 +171,10 @@ void Renderer::recordCommands(const vk::raii::CommandBuffer& cmd, const Swapchai
                            .maxDepth = 1.0f,
                        });
     cmd.setScissor(0, vk::Rect2D{.offset = {0, 0}, .extent = extent});
+
+    // 행렬을 push constant로 보낸다. 바인딩된 파이프라인의 레이아웃과 같은 범위여야 한다.
+    const PushConstants pushConstants{.mvp = mvp};
+    cmd.pushConstants<PushConstants>(*pipeline_.layout(), vk::ShaderStageFlagBits::eVertex, 0, pushConstants);    
 
     // 정점/인덱스 버퍼를 바인딩하고 그린다.
     mesh.record(cmd);
