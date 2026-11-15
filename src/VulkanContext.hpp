@@ -20,6 +20,10 @@ public:
     const vk::raii::Queue& queue() const { return queue_; }
     uint32_t queueFamily() const { return queueFamily_; }
 
+    // typeBits(자원이 쓸 수 있는 타입) 중에서 required 속성을 모두 가진 첫 번째 메모리 타입.
+    // 스펙이 타입 순서를 정해 두어서, 첫 번째로 맞는 타입이 대개 가장 알맞은 타입이다.
+    uint32_t findMemoryType(uint32_t typeBits, vk::MemoryPropertyFlags required) const;
+
 private:
     // 선언 순서 = 생성 순서, 소멸은 역순
     vk::raii::Context context_;  // 로더 진입점. 인스턴스보다 오래 살아야 한다.

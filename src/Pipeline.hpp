@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+
 #include <glm/glm.hpp>
 
 #include "vk.hpp"
@@ -18,8 +19,9 @@ static_assert(sizeof(PushConstants) <= 128);
 // 그릴 때는 bindPipeline 한 번으로 이 상태 전체가 적용된다.
 class Pipeline {
 public:
-    // colorFormat: 그릴 대상 이미지의 포맷 (dynamic rendering에서는 생성 시 알려줘야 한다)
-    Pipeline(const vk::raii::Device& device, vk::Format colorFormat, const std::string& vertexShaderPath,
+    // colorFormat, depthFormat: 그릴 대상 이미지들의 포맷 (dynamic rendering에서는 생성 시 알려줘야 한다)
+    Pipeline(const vk::raii::Device& device, vk::Format colorFormat, vk::Format depthFormat,
+             const std::string& vertexShaderPath,
              const std::string& fragmentShaderPath);
 
     const vk::raii::Pipeline& handle() const { return pipeline_; }

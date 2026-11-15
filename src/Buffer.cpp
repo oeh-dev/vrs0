@@ -1,27 +1,8 @@
 #include "Buffer.hpp"
 
 #include <cstring>
-#include <stdexcept>
 
 #include "VulkanContext.hpp"
-
-namespace {
-
-// 디바이스의 메모리 타입 중에서 다음 두 조건을 만족하는 첫 번째 것을 고른다.
-//  - typeBits: 이 버퍼가 쓸 수 있는 타입 (getMemoryRequirements가 알려준다)
-//  - required: 필요한 속성 (예: CPU에서 쓸 수 있는가, GPU 전용으로 빠른가)
-uint32_t findMemoryType(const vk::raii::PhysicalDevice& physicalDevice, uint32_t typeBits,
-                        vk::MemoryPropertyFlags required) {
-    const auto props = physicalDevice.getMemoryProperties();
-    for (uint32_t i = 0; i < props.memoryTypeCount; ++i) {
-        const bool allowed = typeBits & (1u << i);
-        const bool matches = (props.memoryTypes[i].propertyFlags & required) == required;
-        if (allowed && matches) return i;
-    }
-    throw std::runtime_error("No suitable memory type");
-}
-
-}  // namespace
 
 GpuBuffer createBuffer(const VulkanContext& context, vk::DeviceSize size, vk::BufferUsageFlags usage,
                        vk::MemoryPropertyFlags properties) {
@@ -39,7 +20,7 @@ GpuBuffer createBuffer(const VulkanContext& context, vk::DeviceSize size, vk::Bu
     vk::raii::DeviceMemory memory(
         device, vk::MemoryAllocateInfo{
                     .allocationSize = req.size,
-                    .memoryTypeIndex = findMemoryType(context.physicalDevice(), req.memoryTypeBits, properties),
+                    .memoryTypeIndex = context.findMemoryType(req.memoryTypeBits, properties),
                 });
     buffer.bindMemory(*memory, 0);
 

@@ -2,6 +2,7 @@
 
 #include <array>
 #include <limits>
+
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "Mesh.hpp"
@@ -13,6 +14,15 @@ namespace {
 // 이미지 전체(색상, 밉 0, 레이어 0)를 가리키는 범위
 constexpr vk::ImageSubresourceRange kColorRange{
     .aspectMask = vk::ImageAspectFlagBits::eColor,
+    .baseMipLevel = 0,
+    .levelCount = 1,
+    .baseArrayLayer = 0,
+    .layerCount = 1,
+};
+
+// 깊이 이미지 전체를 가리키는 범위. 깊이 전용 포맷이라 스텐실은 포함하지 않는다.
+constexpr vk::ImageSubresourceRange kDepthRange{
+    .aspectMask = vk::ImageAspectFlagBits::eDepth,
     .baseMipLevel = 0,
     .levelCount = 1,
     .baseArrayLayer = 0,
@@ -62,8 +72,8 @@ Renderer::Renderer(const VulkanContext& context, Swapchain& swapchain)
       swapchain_(swapchain),
       // 셰이더 경로는 CMake가 SHADER_DIR로 넘겨준다.
       // 파이프라인은 스왑체인 포맷에 맞춰 만든다. (재생성 시 포맷이 바뀌는 경우는 다루지 않는다)
-      pipeline_(context.device(), swapchain.format(), SHADER_DIR "/triangle.vert.spv",
-                SHADER_DIR "/triangle.frag.spv") {
+      pipeline_(context.device(), swapchain.format(), swapchain.depthFormat(), SHADER_DIR "/vertex_color.vert.spv",
+                SHADER_DIR "/vertex_color.frag.spv") {
     const auto& device = context_.device();
 
     commandPool_ = vk::raii::CommandPool(
@@ -104,7 +114,7 @@ void Renderer::drawFrame(const Mesh& mesh, const glm::mat4& model, const glm::ma
     // 이미지를 받은 뒤에 투영을 만든다. 획득 과정에서 스왑체인이 재생성되면 크기가 바뀌기 때문이다.
     const vk::Extent2D extent = swapchain_.extent();
     const glm::mat4 mvp = makeProjection(extent) * view * model;  // 오른쪽부터 적용: 모델 → 월드 → 카메라 → 클립
-    recordCommands(frame.commandBuffer, swapchain_.image(*imageIndex), extent, mesh, mvp);
+    recordCommands(frame.commandBuffer, swapchain_.image(*imageIndex), swapchain_.depth(), extent, mesh, mvp);
 
     // 4. 큐에 제출한다. imageAvailable을 기다렸다가 실행하고, 끝나면 renderFinished를 신호한다.
     const vk::SemaphoreSubmitInfo waitInfo{
@@ -133,7 +143,8 @@ void Renderer::drawFrame(const Mesh& mesh, const glm::mat4& model, const glm::ma
 }
 
 void Renderer::recordCommands(const vk::raii::CommandBuffer& cmd, const SwapchainImage& target,
-                              vk::Extent2D extent, const Mesh& mesh, const glm::mat4& mvp) {
+                              const DepthBuffer& depth, vk::Extent2D extent, const Mesh& mesh,
+                              const glm::mat4& mvp) {
     cmd.begin(vk::CommandBufferBeginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 
     // 이미지 레이아웃 전환: 이전 내용은 버리고(Undefined) 색상 출력용으로.
@@ -141,6 +152,16 @@ void Renderer::recordCommands(const vk::raii::CommandBuffer& cmd, const Swapchai
     transitionImage(cmd, target.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal,
                     vk::PipelineStageFlagBits2::eColorAttachmentOutput, {},
                     vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::AccessFlagBits2::eColorAttachmentWrite);
+
+    // 깊이 이미지도 레이아웃을 전환한다. 이전 내용은 버린다(Undefined). 어차피 아래에서 지운다.
+    // 깊이 이미지는 프레임들이 같이 쓰므로, 앞 프레임의 깊이 테스트(읽기·쓰기)가 끝난 뒤에 이번 프레임이 시작되게 한다.
+    // 배리어의 앞쪽 범위는 같은 큐에 먼저 제출된 명령까지 포함하므로 앞 프레임도 여기에 걸린다.
+    constexpr auto kDepthStages =
+        vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
+    transitionImage(cmd, *depth.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal,
+                    kDepthStages, vk::AccessFlagBits2::eDepthStencilAttachmentWrite, kDepthStages,
+                    vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+                    kDepthRange);
 
     // 도형이 잘 보이도록 어두운 단색으로 지운다. (sRGB 포맷이므로 선형 값)
     const vk::ClearValue clear{.color = vk::ClearColorValue{.float32 = std::array<float, 4>{0.01f, 0.01f, 0.02f, 1.0f}}};
@@ -151,12 +172,21 @@ void Renderer::recordCommands(const vk::raii::CommandBuffer& cmd, const Swapchai
         .storeOp = vk::AttachmentStoreOp::eStore,
         .clearValue = clear,
     };
+    // 깊이: 가장 먼 값 1.0으로 지우고, 다 그린 뒤에는 저장하지 않는다. (화면에 나가는 것은 색상뿐)
+    const vk::RenderingAttachmentInfo depthAttachment{
+        .imageView = *depth.view,
+        .imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+        .loadOp = vk::AttachmentLoadOp::eClear,
+        .storeOp = vk::AttachmentStoreOp::eDontCare,
+        .clearValue = vk::ClearValue{.depthStencil = vk::ClearDepthStencilValue{.depth = 1.0f, .stencil = 0}},
+    };
     // dynamic rendering: 렌더패스와 프레임버퍼 객체 없이 그 자리에서 대상을 지정한다.
     cmd.beginRendering(vk::RenderingInfo{
         .renderArea = vk::Rect2D{.offset = {0, 0}, .extent = extent},
         .layerCount = 1,
         .colorAttachmentCount = 1,
         .pColorAttachments = &colorAttachment,
+        .pDepthAttachment = &depthAttachment,
     });
 
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline_.handle());
@@ -174,7 +204,7 @@ void Renderer::recordCommands(const vk::raii::CommandBuffer& cmd, const Swapchai
 
     // 행렬을 push constant로 보낸다. 바인딩된 파이프라인의 레이아웃과 같은 범위여야 한다.
     const PushConstants pushConstants{.mvp = mvp};
-    cmd.pushConstants<PushConstants>(*pipeline_.layout(), vk::ShaderStageFlagBits::eVertex, 0, pushConstants);    
+    cmd.pushConstants<PushConstants>(*pipeline_.layout(), vk::ShaderStageFlagBits::eVertex, 0, pushConstants);
 
     // 정점/인덱스 버퍼를 바인딩하고 그린다.
     mesh.record(cmd);

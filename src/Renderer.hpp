@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <vector>
+
 #include <glm/glm.hpp>
 
 #include "Pipeline.hpp"
@@ -11,6 +12,7 @@ class VulkanContext;
 class Swapchain;
 class Mesh;
 struct SwapchainImage;
+struct DepthBuffer;
 
 // 프레임 슬롯 하나에 딸린 객체들. CPU가 GPU보다 앞서 준비하는 프레임마다 하나씩 둔다.
 struct FrameData {
@@ -33,8 +35,8 @@ public:
 
 private:
     // 어느 이미지에 그릴지만 알면 되므로, 인덱스가 아니라 이미지와 크기를 받는다.
-    void recordCommands(const vk::raii::CommandBuffer& cmd, const SwapchainImage& target, vk::Extent2D extent,
-                        const Mesh& mesh, const glm::mat4& mvp);
+    void recordCommands(const vk::raii::CommandBuffer& cmd, const SwapchainImage& target, const DepthBuffer& depth,
+                        vk::Extent2D extent, const Mesh& mesh, const glm::mat4& mvp);
 
     const VulkanContext& context_;
     Swapchain& swapchain_;

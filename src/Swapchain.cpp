@@ -29,9 +29,21 @@ vk::CompositeAlphaFlagBitsKHR chooseCompositeAlpha(vk::CompositeAlphaFlagsKHR su
     throw std::runtime_error("No supported composite alpha mode");
 }
 
+// 깊이 첨부로 쓸 수 있는 포맷 중 정밀도가 높은 것을 고른다.
+// Apple Silicon은 D24S8을 지원하지 않으므로 D32를 먼저 시도한다.
+vk::Format chooseDepthFormat(const vk::raii::PhysicalDevice& pd) {
+    for (vk::Format f : {vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint}) {
+        if (pd.getFormatProperties(f).optimalTilingFeatures & vk::FormatFeatureFlagBits::eDepthStencilAttachment) {
+            return f;
+        }
+    }
+    throw std::runtime_error("No supported depth format");
+}
+
 }  // namespace
 
-Swapchain::Swapchain(const VulkanContext& context, GLFWwindow* window) : context_(context), window_(window) {
+Swapchain::Swapchain(const VulkanContext& context, GLFWwindow* window)
+    : context_(context), window_(window), depthFormat_(chooseDepthFormat(context.physicalDevice())) {
     create();
 }
 
@@ -98,8 +110,52 @@ void Swapchain::create() {
             .renderFinished = vk::raii::Semaphore(context_.device(), vk::SemaphoreCreateInfo{}),
         });
     }
+    depth_ = createDepthBuffer();
+
     std::cout << "Swapchain: " << extent_.width << 'x' << extent_.height << ", " << images_.size() << " images, "
-              << vk::to_string(format_) << '\n';
+              << vk::to_string(format_) << ", depth " << vk::to_string(depthFormat_) << '\n';
+}
+
+DepthBuffer Swapchain::createDepthBuffer() const {
+    const auto& device = context_.device();
+    DepthBuffer depth;
+
+    // 이미지도 버퍼처럼 껍데기를 만든 뒤 메모리를 할당해 연결한다.
+    depth.image = vk::raii::Image(device, vk::ImageCreateInfo{
+                                              .imageType = vk::ImageType::e2D,
+                                              .format = depthFormat_,
+                                              .extent = {.width = extent_.width, .height = extent_.height, .depth = 1},
+                                              .mipLevels = 1,
+                                              .arrayLayers = 1,
+                                              .samples = vk::SampleCountFlagBits::e1,
+                                              .tiling = vk::ImageTiling::eOptimal,  // GPU가 정한 배치. CPU는 직접 읽지 않는다.
+                                              .usage = vk::ImageUsageFlagBits::eDepthStencilAttachment,
+                                              .sharingMode = vk::SharingMode::eExclusive,
+                                              .initialLayout = vk::ImageLayout::eUndefined,
+                                          });
+    const auto req = depth.image.getMemoryRequirements();
+    depth.memory = vk::raii::DeviceMemory(
+        device, vk::MemoryAllocateInfo{
+                    .allocationSize = req.size,
+                    .memoryTypeIndex =
+                        context_.findMemoryType(req.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal),
+                });
+    depth.image.bindMemory(*depth.memory, 0);
+
+    depth.view = vk::raii::ImageView(device, vk::ImageViewCreateInfo{
+                                                 .image = *depth.image,
+                                                 .viewType = vk::ImageViewType::e2D,
+                                                 .format = depthFormat_,
+                                                 .subresourceRange =
+                                                     {
+                                                         .aspectMask = vk::ImageAspectFlagBits::eDepth,
+                                                         .baseMipLevel = 0,
+                                                         .levelCount = 1,
+                                                         .baseArrayLayer = 0,
+                                                         .layerCount = 1,
+                                                     },
+                                             });
+    return depth;
 }
 
 void Swapchain::recreate() {

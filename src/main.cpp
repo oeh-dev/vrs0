@@ -6,17 +6,17 @@
 //   Swapchain      스왑체인 수명: 화면 크기가 바뀌면 다시 만드는 것들
 //   Renderer       프레임 수명: 매 프레임 기록하고 제출하는 것들
 //   Pipeline       셰이더와 그리기 설정을 묶은 그래픽스 파이프라인
-//   Mesh           정점 버퍼와 인덱스 버퍼
+//   Mesh           정점 버퍼와 인덱스 버퍼 (Geometry가 만든 CPU 쪽 데이터를 GPU로 올린 것)
 
-#include <array>
-#include <cstdint>
 #include <cstdlib>
 #include <exception>
 #include <iostream>
 #include <optional>
 #include <string>
+
 #include <glm/gtc/matrix_transform.hpp>
 
+#include "Geometry.hpp"
 #include "Mesh.hpp"
 #include "Renderer.hpp"
 #include "Swapchain.hpp"
@@ -28,23 +28,13 @@ namespace {
 constexpr int kWidth = 1280;
 constexpr int kHeight = 720;
 
-// 사각형 하나. 정점 4개를 인덱스 6개(삼각형 2개)가 공유한다.
-// 모델 좌표(x 오른쪽, y 위쪽 +, z 화면 앞쪽 +)이고, 앞(+z)에서 볼 때 반시계 방향으로 감는다.
-const std::array<Vertex, 4> kQuadVertices{{
-    {.pos = {-0.5f, -0.5f}, .color = {1.0f, 0.0f, 0.0f}},  // 왼쪽 아래
-    {.pos = {0.5f, -0.5f}, .color = {0.0f, 1.0f, 0.0f}},   // 오른쪽 아래
-    {.pos = {0.5f, 0.5f}, .color = {0.0f, 0.0f, 1.0f}},    // 오른쪽 위
-    {.pos = {-0.5f, 0.5f}, .color = {1.0f, 1.0f, 1.0f}},   // 왼쪽 위
-}};
-const std::array<uint16_t, 6> kQuadIndices{0, 1, 2, 2, 3, 0};
-
 class App {
 public:
     explicit App(std::optional<size_t> requestedDevice)
         : window_(kWidth, kHeight, "Vulkan RAII Sample"),
           context_(window_.handle(), requestedDevice),
           swapchain_(context_, window_.handle()),
-          mesh_(context_, kQuadVertices, kQuadIndices),
+          mesh_(context_, makeIcosahedron(0.6f)),
           renderer_(context_, swapchain_) {}
 
     // 멤버가 소멸하기 전에, GPU가 아직 사용 중인 객체가 없도록 모든 작업이 끝나기를 기다린다.
@@ -64,13 +54,15 @@ public:
             glfwPollEvents();
             if (window_.isKeyPressed(GLFW_KEY_ESCAPE)) window_.requestClose();
 
-            // 시간에 비례해 y축(세로축) 둘레로 회전한다. 프레임 속도와 상관없이 같은 빠르기가 된다.
+            // 시간에 비례해 y축(세로축) 둘레로 돌리고, x축으로 조금 기울여 위쪽 면도 보이게 한다.
+            // 행렬은 오른쪽부터 적용되므로 "먼저 y축 회전, 그다음 기울임" 순서다.
             const float angle = static_cast<float>(glfwGetTime()) * glm::radians(60.0f);  // 초당 60도
-            const glm::mat4 model = glm::rotate(glm::mat4(1.0f), angle, glm::vec3(0.0f, 1.0f, 0.0f));
+            const glm::mat4 tilt = glm::rotate(glm::mat4(1.0f), glm::radians(20.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+            const glm::mat4 model = tilt * glm::rotate(glm::mat4(1.0f), angle, glm::vec3(0.0f, 1.0f, 0.0f));
 
             // 카메라: (0, 0, 2)에서 원점을 본다. 위쪽은 +y.
             const glm::mat4 view =
-                glm::lookAt(glm::vec3(0.0f, 0.0f, 2.0f), glm::vec3(0.0f), glm::vec3(1.0f, 1.0f, 0.0f));
+                glm::lookAt(glm::vec3(0.0f, 0.0f, 2.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
 
             renderer_.drawFrame(mesh_, model, view);
         }

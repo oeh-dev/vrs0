@@ -276,3 +276,13 @@ VulkanContext::VulkanContext(GLFWwindow* window, std::optional<size_t> requested
     device_ = createDevice(physicalDevice_, queueFamily_);
     queue_ = device_.getQueue(queueFamily_, 0);
 }
+
+uint32_t VulkanContext::findMemoryType(uint32_t typeBits, vk::MemoryPropertyFlags required) const {
+    const auto props = physicalDevice_.getMemoryProperties();
+    for (uint32_t i = 0; i < props.memoryTypeCount; ++i) {
+        const bool allowed = typeBits & (1u << i);
+        const bool matches = (props.memoryTypes[i].propertyFlags & required) == required;
+        if (allowed && matches) return i;
+    }
+    throw std::runtime_error("No suitable memory type");
+}

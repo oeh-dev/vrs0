@@ -34,8 +34,8 @@ vk::raii::ShaderModule createShaderModule(const vk::raii::Device& device, const 
 
 }  // namespace
 
-Pipeline::Pipeline(const vk::raii::Device& device, vk::Format colorFormat, const std::string& vertexShaderPath,
-                   const std::string& fragmentShaderPath) {
+Pipeline::Pipeline(const vk::raii::Device& device, vk::Format colorFormat, vk::Format depthFormat,
+                   const std::string& vertexShaderPath, const std::string& fragmentShaderPath) {
     // 셰이더 모듈은 파이프라인 생성에만 필요하다. 생성이 끝나면 이 함수를 나가면서 소멸해도 된다.
     const vk::raii::ShaderModule vertexShader = createShaderModule(device, vertexShaderPath);
     const vk::raii::ShaderModule fragmentShader = createShaderModule(device, fragmentShaderPath);
@@ -80,6 +80,14 @@ Pipeline::Pipeline(const vk::raii::Device& device, vk::Format colorFormat, const
         .rasterizationSamples = vk::SampleCountFlagBits::e1,  // 안티에일리어싱 없음
     };
 
+    // 깊이 테스트: 이미 그려진 것보다 가까운(깊이 값이 작은) 조각만 그리고, 그 깊이를 기록한다.
+    // 깊이 버퍼는 매 프레임 1.0(가장 먼 곳)으로 지운다.
+    const vk::PipelineDepthStencilStateCreateInfo depthStencil{
+        .depthTestEnable = VK_TRUE,
+        .depthWriteEnable = VK_TRUE,
+        .depthCompareOp = vk::CompareOp::eLess,
+    };
+
     // 색상 출력 대상 하나. 블렌딩 없이 RGBA를 모두 쓴다.
     const vk::PipelineColorBlendAttachmentState blendAttachment{
         .blendEnable = VK_FALSE,
@@ -114,6 +122,7 @@ Pipeline::Pipeline(const vk::raii::Device& device, vk::Format colorFormat, const
     const vk::PipelineRenderingCreateInfo renderingInfo{
         .colorAttachmentCount = 1,
         .pColorAttachmentFormats = &colorFormat,
+        .depthAttachmentFormat = depthFormat,
     };
 
     const vk::GraphicsPipelineCreateInfo createInfo{
@@ -125,7 +134,7 @@ Pipeline::Pipeline(const vk::raii::Device& device, vk::Format colorFormat, const
         .pViewportState = &viewport,
         .pRasterizationState = &rasterization,
         .pMultisampleState = &multisample,
-        .pDepthStencilState = nullptr,  // 깊이 버퍼 없음. 5단계에서 추가한다.
+        .pDepthStencilState = &depthStencil,
         .pColorBlendState = &colorBlend,
         .pDynamicState = &dynamicState,
         .layout = *layout_,
