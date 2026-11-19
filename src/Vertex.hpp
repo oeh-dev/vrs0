@@ -9,8 +9,9 @@
 
 // 정점 하나. 버퍼 안에서 이 구조체가 빈틈없이 반복된다.
 struct Vertex {
-    glm::vec3 pos;    // 모델 좌표
-    glm::vec3 color;  // 선형 값. sRGB 스왑체인이 저장할 때 인코딩한다.
+    glm::vec3 pos;     // 모델 좌표
+    glm::vec3 color;   // 선형 값. sRGB 스왑체인이 저장할 때 인코딩한다.
+    glm::vec3 normal;  // 모델 좌표의 단위 법선. 면에 수직으로 바깥을 향한다.
 
     // 클래스 정의 안에서는 Vertex가 아직 불완전한 타입이라 sizeof/offsetof를
     // static constexpr 멤버의 초기값으로 쓸 수 없다. 그래서 함수로 둔다.
@@ -21,10 +22,11 @@ struct Vertex {
     }
 
     // 속성: 정점 안의 각 값이 셰이더의 어느 location으로, 어떤 형식으로 들어가는가.
-    static std::array<vk::VertexInputAttributeDescription, 2> attributes() {
+    static std::array<vk::VertexInputAttributeDescription, 3> attributes() {
         return {{
             {.location = 0, .binding = 0, .format = vk::Format::eR32G32B32Sfloat, .offset = offsetof(Vertex, pos)},
             {.location = 1, .binding = 0, .format = vk::Format::eR32G32B32Sfloat, .offset = offsetof(Vertex, color)},
+            {.location = 2, .binding = 0, .format = vk::Format::eR32G32B32Sfloat, .offset = offsetof(Vertex, normal)},
         }};
     }
 };

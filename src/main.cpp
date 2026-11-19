@@ -8,6 +8,7 @@
 //   Pipeline       셰이더와 그리기 설정을 묶은 그래픽스 파이프라인
 //   Mesh           정점 버퍼와 인덱스 버퍼 (Geometry가 만든 CPU 쪽 데이터를 GPU로 올린 것)
 
+#include <array>
 #include <cstdlib>
 #include <exception>
 #include <iostream>
@@ -34,7 +35,8 @@ public:
         : window_(kWidth, kHeight, "Vulkan RAII Sample"),
           context_(window_.handle(), requestedDevice),
           swapchain_(context_, window_.handle()),
-          mesh_(context_, makeIcosahedron(0.6f)),
+          soccerBall_(context_, makeTruncatedIcosahedron(0.6f)),
+          sphere_(context_, makeIcosphere(0.6f, 3, glm::vec3(0.8f, 0.25f, 0.1f))),
           renderer_(context_, swapchain_) {}
 
     // 멤버가 소멸하기 전에, GPU가 아직 사용 중인 객체가 없도록 모든 작업이 끝나기를 기다린다.
@@ -55,16 +57,22 @@ public:
             if (window_.isKeyPressed(GLFW_KEY_ESCAPE)) window_.requestClose();
 
             // 시간에 비례해 y축(세로축) 둘레로 돌리고, x축으로 조금 기울여 위쪽 면도 보이게 한다.
-            // 행렬은 오른쪽부터 적용되므로 "먼저 y축 회전, 그다음 기울임" 순서다.
+            // 행렬은 오른쪽부터 적용되므로 "먼저 y축 회전, 그다음 기울임, 마지막으로 제자리로 이동" 순서다.
             const float angle = static_cast<float>(glfwGetTime()) * glm::radians(60.0f);  // 초당 60도
             const glm::mat4 tilt = glm::rotate(glm::mat4(1.0f), glm::radians(20.0f), glm::vec3(1.0f, 0.0f, 0.0f));
-            const glm::mat4 model = tilt * glm::rotate(glm::mat4(1.0f), angle, glm::vec3(0.0f, 1.0f, 0.0f));
+            const glm::mat4 spin = tilt * glm::rotate(glm::mat4(1.0f), angle, glm::vec3(0.0f, 1.0f, 0.0f));
+            auto placeAt = [&](float x) { return glm::translate(glm::mat4(1.0f), glm::vec3(x, 0.0f, 0.0f)) * spin; };
 
-            // 카메라: (0, 0, 2)에서 원점을 본다. 위쪽은 +y.
+            const std::array<DrawItem, 2> items{{
+                {.mesh = soccerBall_, .model = placeAt(-0.75f)},
+                {.mesh = sphere_, .model = placeAt(0.75f)},
+            }};
+
+            // 카메라: (0, 0, 3)에서 원점을 본다. 위쪽은 +y.
             const glm::mat4 view =
-                glm::lookAt(glm::vec3(0.0f, 0.0f, 2.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+                glm::lookAt(glm::vec3(0.0f, 0.0f, 3.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
 
-            renderer_.drawFrame(mesh_, model, view);
+            renderer_.drawFrame(items, view);
         }
     }
 
@@ -74,7 +82,8 @@ private:
     Window window_;
     VulkanContext context_;
     Swapchain swapchain_;
-    Mesh mesh_;
+    Mesh soccerBall_;
+    Mesh sphere_;
     Renderer renderer_;
 };
 

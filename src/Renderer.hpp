@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -13,6 +14,13 @@ class Swapchain;
 class Mesh;
 struct SwapchainImage;
 struct DepthBuffer;
+
+// 그릴 물체 하나: 어떤 메시를 어디에(모델 → 월드) 놓는가.
+// mesh는 그리는 동안 살아 있어야 한다. 장면 데이터는 App이 소유하고 매 프레임 넘겨준다.
+struct DrawItem {
+    const Mesh& mesh;
+    glm::mat4 model;
+};
 
 // 프레임 슬롯 하나에 딸린 객체들. CPU가 GPU보다 앞서 준비하는 프레임마다 하나씩 둔다.
 struct FrameData {
@@ -29,14 +37,13 @@ public:
     // context와 swapchain이 이 객체보다 오래 살아야 한다. (App에서 보장)
     Renderer(const VulkanContext& context, Swapchain& swapchain);
 
-    // mesh는 그리는 동안 살아 있어야 한다. 장면 데이터는 App이 소유하고 매 프레임 넘겨준다.
-    // model: 모델 → 월드, view: 월드 → 카메라. 투영은 화면 비율을 아는 Renderer가 만든다.
-    void drawFrame(const Mesh& mesh, const glm::mat4& model, const glm::mat4& view);
+    // view: 월드 → 카메라. 투영은 화면 비율을 아는 Renderer가 만든다.
+    void drawFrame(std::span<const DrawItem> items, const glm::mat4& view);
 
 private:
     // 어느 이미지에 그릴지만 알면 되므로, 인덱스가 아니라 이미지와 크기를 받는다.
     void recordCommands(const vk::raii::CommandBuffer& cmd, const SwapchainImage& target, const DepthBuffer& depth,
-                        vk::Extent2D extent, const Mesh& mesh, const glm::mat4& mvp);
+                        vk::Extent2D extent, std::span<const DrawItem> items, const glm::mat4& viewProj);
 
     const VulkanContext& context_;
     Swapchain& swapchain_;

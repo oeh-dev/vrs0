@@ -68,8 +68,8 @@ endif()
 # 셰이더: GLSL 소스를 SPIR-V로 컴파일해 빌드 디렉터리의 shaders/에 둔다.
 # 소스가 바뀌었을 때만 다시 컴파일하고, 실행 파일보다 먼저 만들어지게 한다.
 set(SHADER_SOURCES
-  shaders/vertex_color.vert
-  shaders/vertex_color.frag
+  shaders/lit.vert
+  shaders/lit.frag
 )
 set(SHADER_OUTPUT_DIR ${CMAKE_BINARY_DIR}/shaders)
 

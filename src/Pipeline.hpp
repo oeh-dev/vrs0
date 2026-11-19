@@ -8,8 +8,10 @@
 
 // 그릴 때마다 명령 버퍼에 직접 실어 보내는 작은 데이터. 셰이더의 push_constant 블록과 배치가 같아야 한다.
 // 스펙이 보장하는 최소 크기는 128바이트이므로 그 안에 맞춘다.
+// 이 구조체는 128바이트로 그 한도를 꽉 채운다.
 struct PushConstants {
-    glm::mat4 mvp;  // 모델 → 클립 공간. GLM과 GLSL 모두 열 우선(column-major)이라 그대로 복사하면 된다.
+    glm::mat4 mvp;    // 모델 → 클립 공간. GLM과 GLSL 모두 열 우선(column-major)이라 그대로 복사하면 된다.
+    glm::mat4 model;  // 모델 → 월드 공간. 조명을 월드 공간에서 계산하려고 법선을 옮길 때 쓴다.
 };
 static_assert(sizeof(PushConstants) <= 128);
 

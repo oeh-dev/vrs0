@@ -72,8 +72,8 @@ Renderer::Renderer(const VulkanContext& context, Swapchain& swapchain)
       swapchain_(swapchain),
       // 셰이더 경로는 CMake가 SHADER_DIR로 넘겨준다.
       // 파이프라인은 스왑체인 포맷에 맞춰 만든다. (재생성 시 포맷이 바뀌는 경우는 다루지 않는다)
-      pipeline_(context.device(), swapchain.format(), swapchain.depthFormat(), SHADER_DIR "/vertex_color.vert.spv",
-                SHADER_DIR "/vertex_color.frag.spv") {
+      pipeline_(context.device(), swapchain.format(), swapchain.depthFormat(), SHADER_DIR "/lit.vert.spv",
+                SHADER_DIR "/lit.frag.spv") {
     const auto& device = context_.device();
 
     commandPool_ = vk::raii::CommandPool(
@@ -97,7 +97,7 @@ Renderer::Renderer(const VulkanContext& context, Swapchain& swapchain)
     }
 }
 
-void Renderer::drawFrame(const Mesh& mesh, const glm::mat4& model, const glm::mat4& view) {
+void Renderer::drawFrame(std::span<const DrawItem> items, const glm::mat4& view) {
     const auto& device = context_.device();
     FrameData& frame = frames_[frame_];
 
@@ -113,8 +113,9 @@ void Renderer::drawFrame(const Mesh& mesh, const glm::mat4& model, const glm::ma
     frame.commandBuffer.reset();
     // 이미지를 받은 뒤에 투영을 만든다. 획득 과정에서 스왑체인이 재생성되면 크기가 바뀌기 때문이다.
     const vk::Extent2D extent = swapchain_.extent();
-    const glm::mat4 mvp = makeProjection(extent) * view * model;  // 오른쪽부터 적용: 모델 → 월드 → 카메라 → 클립
-    recordCommands(frame.commandBuffer, swapchain_.image(*imageIndex), swapchain_.depth(), extent, mesh, mvp);
+    // 투영과 뷰는 모든 물체가 같으므로 한 번만 곱해 둔다. 물체별 model은 기록할 때 곱한다.
+    const glm::mat4 viewProj = makeProjection(extent) * view;
+    recordCommands(frame.commandBuffer, swapchain_.image(*imageIndex), swapchain_.depth(), extent, items, viewProj);
 
     // 4. 큐에 제출한다. imageAvailable을 기다렸다가 실행하고, 끝나면 renderFinished를 신호한다.
     const vk::SemaphoreSubmitInfo waitInfo{
@@ -143,8 +144,8 @@ void Renderer::drawFrame(const Mesh& mesh, const glm::mat4& model, const glm::ma
 }
 
 void Renderer::recordCommands(const vk::raii::CommandBuffer& cmd, const SwapchainImage& target,
-                              const DepthBuffer& depth, vk::Extent2D extent, const Mesh& mesh,
-                              const glm::mat4& mvp) {
+                              const DepthBuffer& depth, vk::Extent2D extent, std::span<const DrawItem> items,
+                              const glm::mat4& viewProj) {
     cmd.begin(vk::CommandBufferBeginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 
     // 이미지 레이아웃 전환: 이전 내용은 버리고(Undefined) 색상 출력용으로.
@@ -202,12 +203,16 @@ void Renderer::recordCommands(const vk::raii::CommandBuffer& cmd, const Swapchai
                        });
     cmd.setScissor(0, vk::Rect2D{.offset = {0, 0}, .extent = extent});
 
-    // 행렬을 push constant로 보낸다. 바인딩된 파이프라인의 레이아웃과 같은 범위여야 한다.
-    const PushConstants pushConstants{.mvp = mvp};
-    cmd.pushConstants<PushConstants>(*pipeline_.layout(), vk::ShaderStageFlagBits::eVertex, 0, pushConstants);
-
-    // 정점/인덱스 버퍼를 바인딩하고 그린다.
-    mesh.record(cmd);
+    // 물체마다 행렬을 push constant로 바꿔 보내고 그린다.
+    // push constant는 명령 버퍼에 값이 그대로 기록되므로, 다음 물체의 값으로 덮어써도 앞의 그리기에는 영향이 없다.
+    for (const DrawItem& item : items) {
+        const PushConstants pushConstants{
+            .mvp = viewProj * item.model,  // 오른쪽부터 적용: 모델 → 월드 → 카메라 → 클립
+            .model = item.model,
+        };
+        cmd.pushConstants<PushConstants>(*pipeline_.layout(), vk::ShaderStageFlagBits::eVertex, 0, pushConstants);
+        item.mesh.record(cmd);  // 정점/인덱스 버퍼를 바인딩하고 그린다.
+    }
 
     cmd.endRendering();
 
