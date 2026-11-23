@@ -218,7 +218,7 @@ DeviceCandidate selectDevice(const vk::raii::PhysicalDevices& devices, const vk:
 // ---------------------------------------------------------------------------
 // 논리 디바이스
 
-vk::raii::Device createDevice(const vk::raii::PhysicalDevice& pd, uint32_t queueFamily) {
+vk::raii::Device createDevice(const vk::raii::PhysicalDevice& pd, uint32_t queueFamily, bool enableFillModeNonSolid) {
     const float priority = 1.0f;
     const vk::DeviceQueueCreateInfo queueInfo{
         .queueFamilyIndex = queueFamily,
@@ -237,7 +237,11 @@ vk::raii::Device createDevice(const vk::raii::PhysicalDevice& pd, uint32_t queue
         .synchronization2 = VK_TRUE,
         .dynamicRendering = VK_TRUE,
     };
-    const vk::PhysicalDeviceFeatures2 features2{.pNext = &features13};
+    // 1.0 기능은 features2.features에 넣는다. 와이어프레임에 필요한 fillModeNonSolid는 지원할 때만 켠다.
+    const vk::PhysicalDeviceFeatures2 features2{
+        .pNext = &features13,
+        .features = vk::PhysicalDeviceFeatures{.fillModeNonSolid = enableFillModeNonSolid ? VK_TRUE : VK_FALSE},
+    };
 
     const vk::DeviceCreateInfo createInfo{
         .pNext = &features2,
@@ -273,7 +277,10 @@ VulkanContext::VulkanContext(GLFWwindow* window, std::optional<size_t> requested
     std::cout << "Selected device [" << chosen.index << "], queue family " << queueFamily_ << '\n';
     printMemoryProperties(physicalDevice_);
 
-    device_ = createDevice(physicalDevice_, queueFamily_);
+    wireframeSupported_ = physicalDevice_.getFeatures().fillModeNonSolid == VK_TRUE;
+    std::cout << "Wireframe (fillModeNonSolid): " << (wireframeSupported_ ? "yes" : "no") << '\n';
+
+    device_ = createDevice(physicalDevice_, queueFamily_, wireframeSupported_);
     queue_ = device_.getQueue(queueFamily_, 0);
 }
 

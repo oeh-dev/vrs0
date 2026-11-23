@@ -1,11 +1,14 @@
 #include "Renderer.hpp"
 
 #include <array>
+#include <cstring>
+#include <iostream>
 #include <limits>
 
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "Mesh.hpp"
+#include "ShaderInterface.hpp"
 #include "Swapchain.hpp"
 #include "VulkanContext.hpp"
 
@@ -65,16 +68,56 @@ glm::mat4 makeProjection(vk::Extent2D extent) {
     return proj;
 }
 
+// 디스크립터 세트 레이아웃: 셰이더가 set 0에서 무엇을 받는가. binding 0에 프래그먼트 셰이더가 읽는 uniform buffer 하나.
+vk::raii::DescriptorSetLayout createDescriptorSetLayout(const vk::raii::Device& device) {
+    const vk::DescriptorSetLayoutBinding binding{
+        .binding = 0,
+        .descriptorType = vk::DescriptorType::eUniformBuffer,
+        .descriptorCount = 1,
+        .stageFlags = vk::ShaderStageFlagBits::eFragment,
+    };
+    return vk::raii::DescriptorSetLayout(device, vk::DescriptorSetLayoutCreateInfo{
+                                                     .bindingCount = 1,
+                                                     .pBindings = &binding,
+                                                 });
+}
+
+// 파이프라인 레이아웃: 디스크립터 세트 레이아웃들과 push constant 범위를 묶은 것.
+vk::raii::PipelineLayout createPipelineLayout(const vk::raii::Device& device,
+                                              const vk::raii::DescriptorSetLayout& setLayout) {
+    // push constant는 버텍스 셰이더에서만 읽는다.
+    const vk::PushConstantRange pushConstantRange{
+        .stageFlags = vk::ShaderStageFlagBits::eVertex,
+        .offset = 0,
+        .size = sizeof(PushConstants),
+    };
+    const vk::DescriptorSetLayout setLayoutHandle = *setLayout;
+    return vk::raii::PipelineLayout(device, vk::PipelineLayoutCreateInfo{
+                                                .setLayoutCount = 1,
+                                                .pSetLayouts = &setLayoutHandle,
+                                                .pushConstantRangeCount = 1,
+                                                .pPushConstantRanges = &pushConstantRange,
+                                            });
+}
+
 }  // namespace
 
 Renderer::Renderer(const VulkanContext& context, Swapchain& swapchain)
     : context_(context),
       swapchain_(swapchain),
-      // 셰이더 경로는 CMake가 SHADER_DIR로 넘겨준다.
-      // 파이프라인은 스왑체인 포맷에 맞춰 만든다. (재생성 시 포맷이 바뀌는 경우는 다루지 않는다)
-      pipeline_(context.device(), swapchain.format(), swapchain.depthFormat(), SHADER_DIR "/lit.vert.spv",
-                SHADER_DIR "/lit.frag.spv") {
+      descriptorSetLayout_(createDescriptorSetLayout(context.device())),
+      pipelineLayout_(createPipelineLayout(context.device(), descriptorSetLayout_)),
+      smoothPipeline_(makePipeline({.fragmentMode = FragmentMode::kSmooth})),
+      flatPipeline_(makePipeline({.fragmentMode = FragmentMode::kFlat})),
+      unlitPipeline_(makePipeline({.fragmentMode = FragmentMode::kUnlit})) {
     const auto& device = context_.device();
+
+    if (context_.wireframeSupported()) {
+        wireframePipeline_.emplace(
+            makePipeline({.polygonMode = vk::PolygonMode::eLine, .fragmentMode = FragmentMode::kWireframe}));
+    } else {
+        std::cerr << "Warning: wireframe not supported, falling back to smooth shading\n";
+    }
 
     commandPool_ = vk::raii::CommandPool(
         device, vk::CommandPoolCreateInfo{
@@ -87,17 +130,80 @@ Renderer::Renderer(const VulkanContext& context, Swapchain& swapchain)
         .commandBufferCount = kMaxFramesInFlight,
     });
 
-    for (auto& cb : commandBuffers) {
+    // 디스크립터 풀: 디스크립터 세트를 할당할 공간. 프레임 슬롯마다 uniform buffer 디스크립터 하나씩.
+    const vk::DescriptorPoolSize poolSize{
+        .type = vk::DescriptorType::eUniformBuffer,
+        .descriptorCount = kMaxFramesInFlight,
+    };
+    descriptorPool_ = vk::raii::DescriptorPool(
+        device, vk::DescriptorPoolCreateInfo{
+                    // vk::raii::DescriptorSet은 소멸할 때 세트를 하나씩 해제(vkFreeDescriptorSets)하므로
+                    // 개별 해제를 허용하는 이 플래그가 필요하다. 없으면 종료 시 검증 레이어가 오류를 낸다.
+                    .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+                    .maxSets = kMaxFramesInFlight,
+                    .poolSizeCount = 1,
+                    .pPoolSizes = &poolSize,
+                });
+    const std::vector<vk::DescriptorSetLayout> setLayouts(kMaxFramesInFlight, *descriptorSetLayout_);
+    auto descriptorSets = device.allocateDescriptorSets(vk::DescriptorSetAllocateInfo{
+        .descriptorPool = *descriptorPool_,
+        .descriptorSetCount = kMaxFramesInFlight,
+        .pSetLayouts = setLayouts.data(),
+    });
+
+    for (uint32_t i = 0; i < kMaxFramesInFlight; ++i) {
+        // 매 프레임 CPU가 쓰는 작은 버퍼라 스테이징 없이 CPU가 쓸 수 있는 메모리에 둔다.
+        GpuBuffer uniforms =
+            createBuffer(context_, sizeof(FrameUniforms), vk::BufferUsageFlagBits::eUniformBuffer,
+                         vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+        void* mapped = uniforms.memory.mapMemory(0, sizeof(FrameUniforms));  // 매핑한 채로 계속 쓴다.
+
+        // 세트의 binding 0이 이 버퍼를 가리키게 한다. 버퍼는 바뀌지 않으므로 한 번만 하면 된다.
+        const vk::DescriptorBufferInfo bufferInfo{
+            .buffer = *uniforms.buffer,
+            .offset = 0,
+            .range = sizeof(FrameUniforms),
+        };
+        device.updateDescriptorSets(vk::WriteDescriptorSet{
+                                        .dstSet = *descriptorSets[i],
+                                        .dstBinding = 0,
+                                        .dstArrayElement = 0,
+                                        .descriptorCount = 1,
+                                        .descriptorType = vk::DescriptorType::eUniformBuffer,
+                                        .pBufferInfo = &bufferInfo,
+                                    },
+                                    nullptr);
+
         frames_.push_back(FrameData{
-            .commandBuffer = std::move(cb),
+            .commandBuffer = std::move(commandBuffers[i]),
             .imageAvailable = vk::raii::Semaphore(device, vk::SemaphoreCreateInfo{}),
             // 첫 프레임에서 기다리지 않도록 신호된 상태로 만든다.
             .inFlight = vk::raii::Fence(device, vk::FenceCreateInfo{.flags = vk::FenceCreateFlagBits::eSignaled}),
+            .uniforms = std::move(uniforms),
+            .uniformsMapped = mapped,
+            .descriptorSet = std::move(descriptorSets[i]),
         });
     }
 }
 
-void Renderer::drawFrame(std::span<const DrawItem> items, const glm::mat4& view) {
+Pipeline Renderer::makePipeline(const PipelineOptions& options) const {
+    // 셰이더 경로는 CMake가 SHADER_DIR로 넘겨준다. 모든 변형이 같은 셰이더를 쓰고 특수화 상수만 다르다.
+    // 파이프라인은 스왑체인 포맷에 맞춰 만든다. (재생성 시 포맷이 바뀌는 경우는 다루지 않는다)
+    return Pipeline(context_.device(), pipelineLayout_, swapchain_.format(), swapchain_.depthFormat(),
+                    SHADER_DIR "/lit.vert.spv", SHADER_DIR "/lit.frag.spv", options);
+}
+
+const Pipeline& Renderer::pipelineFor(ShadingMode mode) const {
+    switch (mode) {
+        case ShadingMode::Smooth: return smoothPipeline_;
+        case ShadingMode::Flat: return flatPipeline_;
+        case ShadingMode::Wireframe: return wireframePipeline_ ? *wireframePipeline_ : smoothPipeline_;
+        case ShadingMode::Unlit: return unlitPipeline_;
+    }
+    return smoothPipeline_;
+}
+
+void Renderer::drawFrame(std::span<const DrawItem> items, const glm::mat4& view, const PointLight& light) {
     const auto& device = context_.device();
     FrameData& frame = frames_[frame_];
 
@@ -109,15 +215,25 @@ void Renderer::drawFrame(std::span<const DrawItem> items, const glm::mat4& view)
     if (!imageIndex) return;  // 펜스를 리셋하지 않았으므로 다음 프레임에서 다시 기다려도 멈추지 않는다.
     device.resetFences(*frame.inFlight);
 
-    // 3. 명령을 기록한다.
+    // 3. 이 슬롯의 uniform buffer를 채운다. 1에서 펜스를 기다렸으므로 GPU는 더 이상 이 버퍼를 읽지 않는다.
+    //    HOST_COHERENT이고, 제출(submit)이 그 전의 호스트 쓰기를 GPU에 보이게 하므로 flush나 배리어는 필요 없다.
+    const FrameUniforms uniforms{
+        .cameraPos = glm::inverse(view)[3],  // 뷰 행렬의 역행렬은 카메라 → 월드. 그 이동 성분이 카메라 위치다.
+        .lightPos = glm::vec4(light.position, light.range),
+        .lightColor = glm::vec4(light.color, 0.0f),
+    };
+    std::memcpy(frame.uniformsMapped, &uniforms, sizeof(uniforms));
+
+    // 4. 명령을 기록한다.
     frame.commandBuffer.reset();
     // 이미지를 받은 뒤에 투영을 만든다. 획득 과정에서 스왑체인이 재생성되면 크기가 바뀌기 때문이다.
     const vk::Extent2D extent = swapchain_.extent();
     // 투영과 뷰는 모든 물체가 같으므로 한 번만 곱해 둔다. 물체별 model은 기록할 때 곱한다.
     const glm::mat4 viewProj = makeProjection(extent) * view;
-    recordCommands(frame.commandBuffer, swapchain_.image(*imageIndex), swapchain_.depth(), extent, items, viewProj);
+    recordCommands(frame.commandBuffer, swapchain_.image(*imageIndex), swapchain_.depth(), extent,
+                   frame.descriptorSet, items, viewProj);
 
-    // 4. 큐에 제출한다. imageAvailable을 기다렸다가 실행하고, 끝나면 renderFinished를 신호한다.
+    // 5. 큐에 제출한다. imageAvailable을 기다렸다가 실행하고, 끝나면 renderFinished를 신호한다.
     const vk::SemaphoreSubmitInfo waitInfo{
         .semaphore = *frame.imageAvailable,
         .stageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
@@ -137,14 +253,15 @@ void Renderer::drawFrame(std::span<const DrawItem> items, const glm::mat4& view)
                              },
                              *frame.inFlight);  // GPU 작업이 끝나면 펜스가 신호된다.
 
-    // 5. 화면 출력을 요청한다. renderFinished가 신호된 뒤에 출력된다.
+    // 6. 화면 출력을 요청한다. renderFinished가 신호된 뒤에 출력된다.
     swapchain_.present(*imageIndex);
 
     frame_ = (frame_ + 1) % kMaxFramesInFlight;
 }
 
 void Renderer::recordCommands(const vk::raii::CommandBuffer& cmd, const SwapchainImage& target,
-                              const DepthBuffer& depth, vk::Extent2D extent, std::span<const DrawItem> items,
+                              const DepthBuffer& depth, vk::Extent2D extent,
+                              const vk::raii::DescriptorSet& descriptorSet, std::span<const DrawItem> items,
                               const glm::mat4& viewProj) {
     cmd.begin(vk::CommandBufferBeginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 
@@ -190,9 +307,8 @@ void Renderer::recordCommands(const vk::raii::CommandBuffer& cmd, const Swapchai
         .pDepthAttachment = &depthAttachment,
     });
 
-    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline_.handle());
-
     // 파이프라인에서 동적으로 남겨둔 뷰포트와 시저를 지정한다. 이미지 전체에 그린다.
+    // 모든 파이프라인이 이 둘을 동적 상태로 두었으므로, 파이프라인을 바꿔도 다시 지정할 필요가 없다.
     cmd.setViewport(0, vk::Viewport{
                            .x = 0.0f,
                            .y = 0.0f,
@@ -203,14 +319,24 @@ void Renderer::recordCommands(const vk::raii::CommandBuffer& cmd, const Swapchai
                        });
     cmd.setScissor(0, vk::Rect2D{.offset = {0, 0}, .extent = extent});
 
-    // 물체마다 행렬을 push constant로 바꿔 보내고 그린다.
+    // 장면 공통 데이터(set 0)를 연결한다. 모든 파이프라인이 같은 레이아웃을 쓰므로
+    // 파이프라인을 바꿔도 연결이 유지된다. (push constant도 마찬가지)
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipelineLayout_, 0, *descriptorSet, nullptr);
+
+    // 물체마다 파이프라인을 고르고, 행렬을 push constant로 바꿔 보내고 그린다.
     // push constant는 명령 버퍼에 값이 그대로 기록되므로, 다음 물체의 값으로 덮어써도 앞의 그리기에는 영향이 없다.
+    const Pipeline* bound = nullptr;
     for (const DrawItem& item : items) {
+        const Pipeline& pipeline = pipelineFor(item.mode);
+        if (&pipeline != bound) {  // 같은 파이프라인이 이어지면 다시 바인딩하지 않는다.
+            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline.handle());
+            bound = &pipeline;
+        }
         const PushConstants pushConstants{
             .mvp = viewProj * item.model,  // 오른쪽부터 적용: 모델 → 월드 → 카메라 → 클립
             .model = item.model,
         };
-        cmd.pushConstants<PushConstants>(*pipeline_.layout(), vk::ShaderStageFlagBits::eVertex, 0, pushConstants);
+        cmd.pushConstants<PushConstants>(*pipelineLayout_, vk::ShaderStageFlagBits::eVertex, 0, pushConstants);
         item.mesh.record(cmd);  // 정점/인덱스 버퍼를 바인딩하고 그린다.
     }
 

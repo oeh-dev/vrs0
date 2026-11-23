@@ -7,8 +7,11 @@
 //   Renderer       프레임 수명: 매 프레임 기록하고 제출하는 것들
 //   Pipeline       셰이더와 그리기 설정을 묶은 그래픽스 파이프라인
 //   Mesh           정점 버퍼와 인덱스 버퍼 (Geometry가 만든 CPU 쪽 데이터를 GPU로 올린 것)
+//
+// 키: 1 smooth, 2 flat, 3 wireframe, Esc 종료
 
 #include <array>
+#include <cmath>
 #include <cstdlib>
 #include <exception>
 #include <iostream>
@@ -29,6 +32,8 @@ namespace {
 constexpr int kWidth = 1280;
 constexpr int kHeight = 720;
 
+const glm::vec3 kTorchColor(1.0f, 0.55f, 0.25f);  // 횃불 같은 주황빛 (선형 값)
+
 class App {
 public:
     explicit App(std::optional<size_t> requestedDevice)
@@ -37,6 +42,7 @@ public:
           swapchain_(context_, window_.handle()),
           soccerBall_(context_, makeTruncatedIcosahedron(0.6f)),
           sphere_(context_, makeIcosphere(0.6f, 3, glm::vec3(0.8f, 0.25f, 0.1f))),
+          lightMarker_(context_, makeIcosphere(0.05f, 2, kTorchColor)),
           renderer_(context_, swapchain_) {}
 
     // 멤버가 소멸하기 전에, GPU가 아직 사용 중인 객체가 없도록 모든 작업이 끝나기를 기다린다.
@@ -56,23 +62,42 @@ public:
             glfwPollEvents();
             if (window_.isKeyPressed(GLFW_KEY_ESCAPE)) window_.requestClose();
 
+            // 셰이딩 모드 전환. 키를 누르고 있는 동안의 상태만 보는 임시 방식이다. (7단계에서 입력 처리를 정리한다)
+            if (window_.isKeyPressed(GLFW_KEY_1)) mode_ = ShadingMode::Smooth;
+            if (window_.isKeyPressed(GLFW_KEY_2)) mode_ = ShadingMode::Flat;
+            if (window_.isKeyPressed(GLFW_KEY_3)) mode_ = ShadingMode::Wireframe;
+
+            const float time = static_cast<float>(glfwGetTime());
+
             // 시간에 비례해 y축(세로축) 둘레로 돌리고, x축으로 조금 기울여 위쪽 면도 보이게 한다.
             // 행렬은 오른쪽부터 적용되므로 "먼저 y축 회전, 그다음 기울임, 마지막으로 제자리로 이동" 순서다.
-            const float angle = static_cast<float>(glfwGetTime()) * glm::radians(60.0f);  // 초당 60도
+            const float angle = time * glm::radians(60.0f);  // 초당 60도
             const glm::mat4 tilt = glm::rotate(glm::mat4(1.0f), glm::radians(20.0f), glm::vec3(1.0f, 0.0f, 0.0f));
             const glm::mat4 spin = tilt * glm::rotate(glm::mat4(1.0f), angle, glm::vec3(0.0f, 1.0f, 0.0f));
             auto placeAt = [&](float x) { return glm::translate(glm::mat4(1.0f), glm::vec3(x, 0.0f, 0.0f)) * spin; };
 
-            const std::array<DrawItem, 2> items{{
-                {.mesh = soccerBall_, .model = placeAt(-0.75f)},
-                {.mesh = sphere_, .model = placeAt(0.75f)},
+            // 점광원: 두 물체 둘레를 수평으로 돈다. (반지름 1.6, 높이 0.5, 8초에 한 바퀴)
+            const float orbit = time * glm::radians(45.0f);
+            const PointLight light{
+                .position = glm::vec3(1.6f * std::cos(orbit), 0.5f, 1.6f * std::sin(orbit)),
+                .color = kTorchColor * 2.0f,
+                .range = 4.0f,
+            };
+
+            const std::array<DrawItem, 3> items{{
+                {.mesh = soccerBall_, .model = placeAt(-0.75f), .mode = mode_},
+                {.mesh = sphere_, .model = placeAt(0.75f), .mode = mode_},
+                // 광원 위치를 보여주는 작은 구. 스스로 빛나는 것처럼 조명 없이 칠한다.
+                {.mesh = lightMarker_,
+                 .model = glm::translate(glm::mat4(1.0f), light.position),
+                 .mode = ShadingMode::Unlit},
             }};
 
             // 카메라: (0, 0, 3)에서 원점을 본다. 위쪽은 +y.
             const glm::mat4 view =
                 glm::lookAt(glm::vec3(0.0f, 0.0f, 3.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
 
-            renderer_.drawFrame(items, view);
+            renderer_.drawFrame(items, view, light);
         }
     }
 
@@ -84,7 +109,10 @@ private:
     Swapchain swapchain_;
     Mesh soccerBall_;
     Mesh sphere_;
+    Mesh lightMarker_;
     Renderer renderer_;
+
+    ShadingMode mode_ = ShadingMode::Smooth;
 };
 
 std::optional<size_t> parseDeviceArg(int argc, char** argv) {

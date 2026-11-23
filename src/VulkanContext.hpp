@@ -20,6 +20,9 @@ public:
     const vk::raii::Queue& queue() const { return queue_; }
     uint32_t queueFamily() const { return queueFamily_; }
 
+    // 와이어프레임(polygonMode = eLine)을 쓸 수 있는가. 필수 기능이 아니라서 디바이스에 따라 없을 수 있다.
+    bool wireframeSupported() const { return wireframeSupported_; }
+
     // typeBits(자원이 쓸 수 있는 타입) 중에서 required 속성을 모두 가진 첫 번째 메모리 타입.
     // 스펙이 타입 순서를 정해 두어서, 첫 번째로 맞는 타입이 대개 가장 알맞은 타입이다.
     uint32_t findMemoryType(uint32_t typeBits, vk::MemoryPropertyFlags required) const;
@@ -32,6 +35,7 @@ private:
     vk::raii::SurfaceKHR surface_ = nullptr;
     vk::raii::PhysicalDevice physicalDevice_ = nullptr;
     uint32_t queueFamily_ = 0;  // 디바이스에게 되물을 수 없으므로 직접 보관한다.
+    bool wireframeSupported_ = false;
     vk::raii::Device device_ = nullptr;
     vk::raii::Queue queue_ = nullptr;  // 디바이스가 소유. 소멸 시 할 일이 없다.
 };
