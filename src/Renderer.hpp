@@ -25,6 +25,16 @@ enum class ShadingMode {
     Unlit,      // 조명 없이 정점 색 그대로
 };
 
+inline const char* toString(ShadingMode mode) {
+    switch (mode) {
+        case ShadingMode::Smooth: return "Smooth";
+        case ShadingMode::Flat: return "Flat";
+        case ShadingMode::Wireframe: return "Wireframe";
+        case ShadingMode::Unlit: return "Unlit";
+    }
+    return "?";
+}
+
 // 그릴 물체 하나: 어떤 메시를 어디에(모델 → 월드) 어떻게 칠하는가.
 // mesh는 그리는 동안 살아 있어야 한다. 장면 데이터는 App이 소유하고 매 프레임 넘겨준다.
 struct DrawItem {
